@@ -2,6 +2,7 @@ package babble
 
 import (
 	_babble "github.com/mosaicnetworks/babble/src/babble"
+	_proxy "github.com/mosaicnetworks/babble/src/proxy"
 	"github.com/mosaicnetworks/evm-lite/src/config"
 	"github.com/mosaicnetworks/evm-lite/src/service"
 	"github.com/mosaicnetworks/evm-lite/src/state"
@@ -13,6 +14,7 @@ import (
 type InmemBabble struct {
 	config     *config.BabbleConfig
 	babble     *_babble.Babble
+	proxy      _proxy.AppProxy
 	ethService *service.Service
 	ethState   *state.State
 	logger     *logrus.Logger
@@ -37,24 +39,37 @@ func (b *InmemBabble) Init(state *state.State, service *service.Service) error {
 
 	b.ethState = state
 	b.ethService = service
+	b.proxy = NewProxy(state, service, b.logger)
 
 	realConfig := b.config.ToRealBabbleConfig(b.logger)
-	realConfig.Proxy = NewInmemProxy(state, service, service.GetSubmitCh(), b.logger)
+	realConfig.Proxy = b.proxy
 
 	babble := _babble.NewBabble(realConfig)
+
 	err := babble.Init()
 	if err != nil {
 		return err
 	}
+
 	b.babble = babble
 
 	return nil
 }
 
-//Run starts the Babble node
+//Run starts the Babble node and relay txs from SubmitCh to Babble
 func (b *InmemBabble) Run() error {
-	b.babble.Run()
-	return nil
+
+	go b.babble.Run()
+
+	serviceSubmitCh := b.ethService.GetSubmitCh()
+	proxySubmitCh := b.proxy.SubmitCh()
+
+	for {
+		select {
+		case t := <-serviceSubmitCh:
+			proxySubmitCh <- t
+		}
+	}
 }
 
 //Info returns Babble stats

@@ -1,6 +1,6 @@
 package templates
 
-//Index is the template for the info2 route
+//Index is the template for the html/info route
 var Index = `
 <html>
 <head>
