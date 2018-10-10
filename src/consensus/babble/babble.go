@@ -3,6 +3,7 @@ package babble
 import (
 	_babble "github.com/mosaicnetworks/babble/src/babble"
 	_proxy "github.com/mosaicnetworks/babble/src/proxy"
+	_inmem "github.com/mosaicnetworks/babble/src/proxy/inmem"
 	"github.com/mosaicnetworks/evm-lite/src/config"
 	"github.com/mosaicnetworks/evm-lite/src/service"
 	"github.com/mosaicnetworks/evm-lite/src/state"
@@ -12,12 +13,14 @@ import (
 //InmemBabble implementes the Consensus interface.
 //It uses an inmemory Babble node.
 type InmemBabble struct {
-	config     *config.BabbleConfig
-	babble     *_babble.Babble
-	proxy      _proxy.AppProxy
-	ethService *service.Service
 	ethState   *state.State
-	logger     *logrus.Logger
+	ethService *service.Service
+	proxy      _proxy.AppProxy
+
+	config *config.BabbleConfig
+	babble *_babble.Babble
+
+	logger *logrus.Logger
 }
 
 //NewInmemBabble instantiates a new InmemBabble consensus system
@@ -39,7 +42,7 @@ func (b *InmemBabble) Init(state *state.State, service *service.Service) error {
 
 	b.ethState = state
 	b.ethService = service
-	b.proxy = NewProxy(state, service, b.logger)
+	b.proxy = _inmem.NewInmemProxy(NewHandler(state, service), b.logger)
 
 	realConfig := b.config.ToRealBabbleConfig(b.logger)
 	realConfig.Proxy = b.proxy
