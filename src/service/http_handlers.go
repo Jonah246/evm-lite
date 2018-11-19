@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"io/ioutil"
 	"math/big"
@@ -137,6 +138,32 @@ func callHandler(w http.ResponseWriter, r *http.Request, m *Service) {
 	w.Write(js)
 }
 
+func singleTransactionHandler(txArgs SendTxArgs, m *Service) (JsonTxRes, error) {
+	tx, err := prepareTransaction(txArgs, m.state, m.keyStore)
+	if err != nil {
+		m.logger.WithError(err).Error("Preparing Transaction")
+		return JsonTxRes{}, errors.New("error")
+	}
+
+	if err := m.state.CheckTx(tx); err != nil {
+		m.logger.WithError(err).Error("Checking Transaction")
+		return JsonTxRes{}, errors.New("error")
+	}
+
+	data, err := rlp.EncodeToBytes(tx)
+	if err != nil {
+		m.logger.WithError(err).Error("Encoding Transaction")
+		return JsonTxRes{}, errors.New("error")
+	}
+
+	m.logger.Debug("submitting tx")
+	m.submitCh <- data
+	m.logger.Debug("submitted tx")
+
+	res := JsonTxRes{TxHash: tx.Hash().Hex()}
+	return res, nil
+}
+
 /*
 POST /tx
 data: JSON SendTxArgs
@@ -163,8 +190,10 @@ func transactionHandler(w http.ResponseWriter, r *http.Request, m *Service) {
 	m.logger.WithField("request", r).Debug("POST tx")
 
 	decoder := json.NewDecoder(r.Body)
-	var txArgs SendTxArgs
-	err := decoder.Decode(&txArgs)
+
+	var txArgsArr []SendTxArgs
+	err := decoder.Decode(&txArgsArr)
+
 	if err != nil {
 		m.logger.WithError(err).Error("Decoding JSON txArgs")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -172,32 +201,17 @@ func transactionHandler(w http.ResponseWriter, r *http.Request, m *Service) {
 	}
 	defer r.Body.Close()
 
-	tx, err := prepareTransaction(txArgs, m.state, m.keyStore)
-	if err != nil {
-		m.logger.WithError(err).Error("Preparing Transaction")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	finalRes := make([]JsonTxRes, len(txArgsArr))
+	for index, txArgs := range txArgsArr {
+		res, err := singleTransactionHandler(txArgs, m)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		finalRes[index] = res
 	}
 
-	if err := m.state.CheckTx(tx); err != nil {
-		m.logger.WithError(err).Error("Checking Transaction")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data, err := rlp.EncodeToBytes(tx)
-	if err != nil {
-		m.logger.WithError(err).Error("Encoding Transaction")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	m.logger.Debug("submitting tx")
-	m.submitCh <- data
-	m.logger.Debug("submitted tx")
-
-	res := JsonTxRes{TxHash: tx.Hash().Hex()}
-	js, err := json.Marshal(res)
+	js, err := json.Marshal(finalRes)
 	if err != nil {
 		m.logger.WithError(err).Error("Marshalling JSON response")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -206,7 +220,6 @@ func transactionHandler(w http.ResponseWriter, r *http.Request, m *Service) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(js)
-
 }
 
 /*
